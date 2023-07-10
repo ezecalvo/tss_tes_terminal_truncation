@@ -1,0 +1,159 @@
+library(tidyverse)
+library(data.table)
+
+setwd()
+
+#List with full path, sequencing type & cell line per sample
+ref_all <- read.table('ref_all.tsv',sep = '\t',header = T)
+
+
+#Gets more upstream and more downsteram feature (exon)
+firs_last_fun <- function(reads){
+  reads_pos <- reads[reads$strand=='+',]
+  reads_neg <- reads[reads$strand=='-',]
+  
+  reads_all_pos_first <- reads_pos[reads_pos[, .I[start == min(start)], by=read_name]$V1] %>% as.data.frame()
+  reads_all_pos_last <- reads_pos[reads_pos[, .I[start == max(start)], by=read_name]$V1] %>% as.data.frame()
+  
+  reads_all_neg_first <- reads_neg[reads_neg[, .I[end == max(end)], by=read_name]$V1] %>% as.data.frame()
+  reads_all_neg_last <- reads_neg[reads_neg[, .I[end == min(end)], by=read_name]$V1] %>% as.data.frame()
+  
+  reads_all_first <- rbind(reads_all_pos_first,reads_all_neg_first)
+  reads_all_last <- rbind(reads_all_pos_last,reads_all_neg_last)
+  
+  return(list(reads_all_first=reads_all_first,reads_all_last=reads_all_last))
+}
+
+
+#Run intersect
+intersect_function <- function(reads_all_list){
+  #Split starts and ends from the classification output
+  read_starts <- reads_all_list[["reads_all_first"]][,c('chr','start','end','read_name','gene_id','strand')]
+  read_ends <- reads_all_list[["reads_all_last"]][,c('chr','start','end','read_name','gene_id','strand')]
+  
+  # Write the upstream and downstream feature to a temp file
+  fwrite(read_starts, "read_start_tmp.bed", sep = "\t", append = FALSE, col.names = FALSE,row.names = F,quote = F)
+  fwrite(read_ends, "read_end_tmp.bed", sep = "\t", append = FALSE, col.names = FALSE,row.names = F,quote = F)
+  
+  # Run bedtools to extract the sequence
+  system("bedtools intersect -s -wao -a read_start_tmp.bed -b first_exonstmp.bed > starts_intersect.bed") #first_exonstmp.bed can be changed to run with CAGE peaks
+  system("bedtools intersect -s -wao -a read_end_tmp.bed -b polyAtmp.bed > ends_intersect.bed")
+  
+  #Bring back files
+  starts_intersect <- fread('starts_intersect.bed',sep = '\t') %>% as.data.frame()
+  ends_intersect <- fread('ends_intersect.bed',sep = '\t') %>% as.data.frame()
+  
+  #Now classify reads
+  reads_no_start <- subset(starts_intersect,V10=='.') #Don't match first
+  reads_no_end <- subset(ends_intersect,V10=='.') #Don't match polyA
+  
+  reads_matching_start <- starts_intersect[starts_intersect$V5==starts_intersect$V10,] #Reads match start
+  reads_matching_end <- ends_intersect[ends_intersect$V5==ends_intersect$V10,] #Reads match end
+  reads_matching_end <- setDT(reads_matching_end)[reads_matching_end[, .I[V11 == max(V11)], by=V4]$V1] %>% as.data.frame() #Keep the most downstream polyA in case there are tandem UTRs
+  
+  #Merge reads using their names if they passed FE and polyA filters
+  reads_passed_filters <- merge(reads_matching_start[,c('V1','V2','V3','V4','V5','V6','V11')],reads_matching_end[,c('V2','V3','V4','V10','V11')],by='V4')
+  reads_passed_filters <- reads_passed_filters[reads_passed_filters$V5==reads_passed_filters$V10,]#Using gene ids for overlapping genes. I'm not removing reads mapping to multiple genes because only the most up and down features PER READ will be used when splitting, thus, there is no need to do that
+  colnames(reads_passed_filters) <- c('read_name','chr','start_FE','end_FE','gene_id_FE','strand','FE_index','start_LE','end_LE','gene_id_LE','polyA_index')
+  return(list(reads_no_start=reads_no_start,reads_no_end=reads_no_end,reads_passed_filters=reads_passed_filters))
+}
+
+#Function to merge all the prev gathered info
+classif_final <- function(intersect_function_out){
+  for (i in names(intersect_function_out)){
+    temp <- intersect_function_out[[i]]
+    temp[temp$read_name%in%terminal_reads,'terminal_filter'] <- 'Terminal'
+    temp[temp$read_name%in%non_terminal_reads,'terminal_filter'] <- 'Non-Terminal'
+    intersect_function_out[[i]] <- temp
+  }
+  
+  no_start <- intersect_function_out[["reads_no_start"]] #Store reads not matching peaks
+  no_end <- intersect_function_out[["reads_no_end"]]
+  passed_filters <- intersect_function_out[["reads_passed_filters"]]
+  return(list(no_start=no_start,no_end=no_end,passed_filters=passed_filters))
+  
+}
+
+#Calculate truncation metrics
+truncation_calculator <- function(classif_final_FE){
+  no_FE <- classif_final_FE[["no_FE"]]
+  no_polyA <- classif_final_FE[["no_polyA"]]
+  passed_filters <- classif_final_FE[["passed_filters"]]
+  
+  colnames(no_FE)[5] <- 'gene_id'
+  colnames(no_polyA)[5] <- 'gene_id'
+  colnames(passed_filters)[5] <- 'gene_id'
+  
+  FE_bind_rows <- rbind(data.frame(read_name=no_FE$V4,gene_id=no_FE$gene_id,filter='no_FE'),data.frame(read_name=no_polyA$V4,gene_id=no_polyA$gene_id,filter='no_polyA'),data.frame(read_name=passed_filters$read_name,gene_id=passed_filters$gene_id,filter='passed'))
+  
+  #Remove duplicates and count totals (when binding rows a read assign to no start and no end will be counted twice)
+  unique_for_tot <- FE_bind_rows %>% dplyr::group_by(gene_id) %>% dplyr::summarise(read_name=unique(read_name))
+  raw_counts_per_gene <- table(unique_for_tot$gene_id) %>% as.data.frame() %>% `colnames<-`(c("gene_id", "freq_initial"))
+  FE_bind_rows <- FE_bind_rows[!duplicated(FE_bind_rows),]
+  
+  #Get truncation values
+  truncation_5_FE <- table(subset(FE_bind_rows,filter=='no_FE')$gene_id)%>% as.data.frame()%>% `colnames<-`(c("gene_id", "freq_5end_filter_FE"))
+  truncation_3 <- table(subset(FE_bind_rows,filter=='no_polyA')$gene_id)%>% as.data.frame()%>% `colnames<-`(c("gene_id", "freq_3end_filter"))
+  counts_per_gene_after_filters_FE <- table(subset(FE_bind_rows,filter=='passed')$gene_id)%>% as.data.frame()%>% `colnames<-`(c("gene_id", "final_freq_FE"))
+  
+  truncation_metrics_non_terminal <- merge(merge(merge(truncation_5_FE,truncation_3,by='gene_id',all.x=T,all.y = T),counts_per_gene_after_filters_FE,by='gene_id',all.x=T,all.y = T),raw_counts_per_gene,by = 'gene_id',all.x=T,all.y=T)
+  return(list(truncation_metrics_non_terminal=truncation_metrics_non_terminal))
+}
+
+
+gene_list_no_FE <- list()
+gene_list_no_polyA <- list()
+reads_across_datasets <- list()
+reads_across_datasets_with_term <- list()
+truncation_metrics_all_with_term <- data.frame()
+truncation_metrics_all_no_term <- data.frame()
+file_counter <- 1
+
+
+for (row_num_lopp in 1:nrow(ref_all)){
+  print(paste('Starting sample',row_num_lopp,'of',nrow(ref_all)))
+  
+  file_path_loop <- ref_all$file_name[row_num_lopp]
+  seq_type_loop <- ref_all$seq_type[row_num_lopp]
+  cell_line_loop <- ref_all$cell_line[row_num_lopp]
+  
+  file_name <- paste(trimws(basename(file_path_loop)),collapse=" ")
+  file_name <- sub("(_sorted|\\.fastq).*", "", file_name)
+  
+  raw_reads <- fread(file_path_loop,sep = '\t',header = F)
+  
+  raw_reads <- raw_reads[!is.na(raw_reads$V2),] #Remove the bsub output after running bedtools intersect on an LSF cluster
+  
+  raw_reads <- raw_reads[,c(1,2,3,4,6,16)]
+  colnames(raw_reads) <- c('chr','start','end','read_name','strand','gene_id')
+  
+  #Get terminal reads (from the bedtools intersect output count how many times each read appears, meaning how many features it covers). This is done faster in bash: cut -f 4 all_reads_intersected.bed | sort | uniq -c | awk '{print $2,$1}' > ~/db/counts_per_read/all_reads_intersected.bed)
+
+  counts_per_read <- fread(paste('~/db/counts_per_read/',file_name,'.bed.gz',sep=''),col.names = c('Freq','read_name')) %>% as.data.frame()
+  
+  #If the read only has one feature than that's a terminal read
+  terminal_reads <- counts_per_read[counts_per_read$Freq==1,'read_name']
+  non_terminal_reads <- counts_per_read[counts_per_read$Freq!=1,'read_name']
+  raw_reads <- raw_reads[raw_reads$read_name%in%non_terminal_reads,]
+  
+  #Split read starts and ends to make bed file 
+  reads_all_list <- firs_last_fun(reads = raw_reads)
+  
+  #Run intersect and store outputs
+  intersect_function_out <- intersect_function(reads_all_list)
+  gene_list_no_FE[[file_name]] <- intersect_function_out[["reads_no_start"]] #Store reads not matching peaks
+  gene_list_no_polyA[[file_name]] <- intersect_function_out[["reads_no_end"]]
+  reads_passed_filters <- intersect_function_out[["reads_passed_filters"]]
+  
+  #Get truncation metrics
+  classif_final_FE <- list(no_FE=gene_list_no_FE[[file_name]],no_polyA=gene_list_no_polyA[[file_name]],passed_filters=reads_passed_filters)
+  truncation_list <- truncation_calculator(classif_final_FE)
+  trunc_to_store <- truncation_list[["truncation_metrics_non_terminal"]]
+  
+  trunc_to_store$seq_type <- seq_type_loop
+  trunc_to_store$cell_line <- cell_line_loop
+  trunc_to_store$file_name <- file_name
+  
+  truncation_metrics_all_with_term <- rbind(truncation_metrics_all_with_term,trunc_to_store)
+  
+}

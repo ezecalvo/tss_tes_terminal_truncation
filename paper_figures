@@ -1,0 +1,339 @@
+library(tidyverse)
+library(cowplot)
+library(RColorBrewer)
+library(wesanderson)
+library(reshape2)
+library(gplots)
+library(devtools)
+library(ggridges)
+library(scales)
+library(NatParksPalettes)
+library(MetBrewer)
+
+load('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/figures/data_5_12_23.RData')
+
+truncation_metrics <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/truncation_metrics_for_plot.tsv',sep = '\t',header = T)
+truncation_metrics$variable <- factor(truncation_metrics$variable,levels = c("FE","polyA","FE+polyA"),labels = c("FE","polyA","FE & polyA"))
+
+colors_to_use <- c(met.brewer(name = 'Nizami')[c(5,7)],met.brewer(name = 'Demuth')[c(3,4)])
+
+
+total_features_clean$seq_type <- factor(total_features_clean$seq_type,levels = c("directcDNA","directRNA","PacBio","TIF-seq"),labels=c("directcDNA (ONT)","directRNA(ONT)","Iso-Seq (PacBio)","TIF-Seq2"))
+truncation_metrics$seq_type <- factor(truncation_metrics$seq_type,levels = c('directDNA','directRNA','PacBio','TIF-seq'),labels=c("directcDNA (ONT)","directRNA(ONT)","Iso-Seq (PacBio)","TIF-Seq2"))
+genes_per_sample$seq_type <- factor(genes_per_sample$seq_type,levels = c('directcDNA','directRNA','PacBio','TIF-seq'),labels=c("directcDNA (ONT)","directRNA(ONT)","Iso-Seq (PacBio)","TIF-Seq2"))
+counts_per_gene$seq_type <- factor(counts_per_gene$seq_type,levels = c("directcDNA","directRNA","PacBio","TIF-seq"),labels=c("directcDNA (ONT)","directRNA(ONT)","Iso-Seq (PacBio)","TIF-Seq2"))
+
+
+g.legend <- function(a.plot){
+  tmp <- ggplot_gtable(ggplot_build(a.plot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+
+#####
+#Fig 1
+LRS_loop <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/LRS_CDC42.tsv',sep = '\t',header = T)
+dotted_isoforms <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/dotted_isoforms_CDC42.tsv',sep = '\t',header = T)
+isoforms_loop <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/isoforms_CDC42.tsv',sep = '\t',header = T)
+first_exon_loop <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/FE_CDC42.tsv',sep = '\t',header = T)
+polyA_loop <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/polyA_CDC42.tsv',sep = '\t',header = T)
+
+
+pdf('~/Dropbox (UMass Medical School)/PaiLab/collabprojects/TSS_TES_tech_report/fig1.pdf',width = 8,height = 7.5)
+print(ggplot(LRS_loop) +
+        geom_segment(aes(x = start, xend = end, y = (-1 * new_id), yend = (-1 * new_id), color = seq_type), size = 0.5) +
+        theme_minimal() +
+        geom_segment(dotted_isoforms, mapping = aes(x = start, xend = end, y = 2 * id + 10, yend = 2 * id + 10), linetype = 'dashed', size = 0.1) +
+        geom_segment(isoforms_loop, mapping = aes(x = start, xend = end, y = 2 * id + 10, yend = 2 * id + 10), size = 3, color = met.brewer(name = 'Archambault')[4]) +
+        scale_color_manual(values = colors_to_use) +
+        geom_segment(first_exon_loop, mapping = aes(x = start, xend = end, y = max(isoforms_loop$id + 25), yend = max(isoforms_loop$id + 25)), size = 8, color = met.brewer(name = 'Archambault')[3]) +
+        geom_segment(polyA_loop, mapping = aes(x = start, xend = end, y = max(isoforms_loop$id + 20), yend = max(isoforms_loop$id + 20)), size = 8, color = met.brewer(name = 'Cassatt2')[8]) +
+        labs(title = paste('CDC42', ' (-)', ' | K562', sep = ''), x = 'genomic coordinate on chr1 (Mb)') +
+        theme(legend.position = "none", panel.grid = element_blank(), axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.background = element_blank(), axis.ticks.x = element_blank(), axis.text = element_text(size = 11), axis.title = element_text(size = 13), plot.title = element_text(size = 13, face = 'bold')) +
+        scale_x_continuous(labels = function(x) scales::number_format(accuracy = 0.01, scale = 1e-6)(x))
+)
+dev.off()
+
+
+#####
+df_2a <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/term_proportions.tsv',sep = '\t',header = T)
+df_2a$seq_type <- factor(df_2a$seq_type,levels=c('directDNA','directRNA','PacBio','TIF-Seq2'),labels=c('directcDNA\n(ONT)','directRNA\n(ONT)','Iso-Seq\n(PacBio)','TIF-Seq2'))
+
+fig_2a <- ggplot(df_2a)+
+  geom_boxplot(aes(x=seq_type,y=terminal_proportion,fill=seq_type))+
+  theme_cowplot()+
+  theme(axis.line = element_line(colour = 'black', size = 1),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.text=element_text(size=10),
+        strip.background=element_rect(fill='gray95'),
+        legend.position='none',
+        axis.title.x = element_blank())+
+  labs(y='Proportion of reads starting\nand ending on the same exon',fill='Seq type')+
+  scale_fill_manual(values = colors_to_use)
+
+fig_2_b <- total_features_clean %>% ggplot()+
+  geom_boxplot(aes(x=factor(V5,levels = c("first","internal","last","intron"),labels = c("first\nexon","internal\nexon","last\nexon","intron")),y=norm_reads,fill=seq_type),outlier.size = 0.2,size=0.1)+
+  theme_cowplot()+
+  labs(x='',y='proportion of reads per sample',fill='')+
+  scale_fill_manual(values = colors_to_use)+
+  facet_grid(factor(end,levels = c('start','end'),labels = c('read starts','read ends'))~.)+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),panel.background = element_rect(color='lightgray'),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        axis.title.x = element_blank(),
+        strip.background=element_rect(fill='gray95'),strip.text=element_text(size=10))+
+  scale_y_continuous(labels = c(0,0.25,0.5,0.75,1),breaks = c(0,0.25,0.5,0.75,1),limits = c(0,1))+
+  background_grid(major = 'y')+
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+
+fig_2_legend <- g.legend(fig_2_b)
+
+fig_2_b <- fig_2_b+theme(legend.position = 'none')
+
+fig_2_c_top <- all_bins[all_bins$classif_for_plot!='transcript end' & all_bins$classif_for_plot!='transcript start' & !is.na(all_bins$classif_for_plot),] %>% subset(end=='read starts') %>% ggplot(aes(x=bin,y=sumed_norm_cov,color=seq_type,group=seq_type))+
+  #geom_point()+
+  geom_line(size=1)+
+  theme_cowplot()+
+  facet_grid(end~classif_for_plot)+
+  labs(x='fractional position',y='proportion of reads')+
+  theme(legend.position='none',
+        axis.title.x = element_blank(),axis.ticks.x=element_blank(),axis.text.x = element_blank(),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.background=element_rect(fill='gray95'),strip.text=element_text(size=10)
+  )+
+  scale_color_manual(values = colors_to_use)+
+  background_grid(major='y',minor = 'x')
+
+
+fig_2_c_bot <- all_bins[all_bins$classif_for_plot!='transcript end' & all_bins$classif_for_plot!='transcript start' & !is.na(all_bins$classif_for_plot),] %>% subset(end=='read ends') %>% ggplot(aes(x=bin,y=sumed_norm_cov,color=seq_type,group=seq_type))+
+  #geom_point()+
+  geom_line(size=1)+
+  theme_cowplot()+
+  facet_grid(end~factor(classif_for_plot,levels = c('non-last exons','last exons')))+
+  labs(x='fractional position',y='')+
+  theme(axis.title.x = element_blank(),axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),legend.position = 'none',
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.background=element_rect(fill='gray95'),strip.text=element_text(size=10)
+  )+
+  scale_color_manual(values = colors_to_use)+
+  background_grid(major='y',minor = 'x')+
+  scale_y_continuous(labels = function(x) sprintf("%.3f", x))
+
+
+all_bins_tx$feature <- factor(all_bins_tx$feature,c("Transcript start","Transcript end"),c("transcript start","transcript end"))
+all_bins_tx$end <- factor(all_bins_tx$end,c("read starts","read ends"))
+
+fig_2_d <- all_bins_tx %>% ggplot(aes(x=bin,y=sumed_norm_cov,color=seq_type,group=seq_type))+
+  geom_line()+
+  geom_line(size=1)+
+  theme_cowplot()+
+  facet_grid(end~feature,scales = 'free_y')+
+  scale_color_manual(values = colors_to_use)+
+  scale_x_continuous(breaks = c(0,0.5,1),labels = c('-250','0','+250'))+
+  labs(y='proportion of reads',x='distance from site (nt)')+
+  background_grid(major='y',minor = 'x')+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),
+      axis.text = element_text(size=9), axis.title = element_text(size=10),
+      legend.text=element_text(size=9), legend.title=element_text(size=9),
+      strip.text=element_text(size=10),
+      strip.background=element_rect(fill='gray95'),
+      legend.position='none',
+      axis.title.x = element_blank())
+
+
+#fractional position
+#distance from site (nt)
+pdf('~/Dropbox (UMass Medical School)/PaiLab/collabprojects/TSS_TES_tech_report/fig2.pdf',width = 8,height = 7.5)
+ggdraw() + 
+  draw_plot(fig_2a, 0, 0.53, 0.33, 0.47)+
+  draw_plot(fig_2_b, 0.33, 0.53, 0.66, 0.47)+
+  draw_plot(fig_2_legend,0.4, 0.27, 0.5, 0.5)+
+  draw_plot(fig_2_c_top, 0, 0.23, 0.5, 0.23)+
+  draw_plot(fig_2_c_bot, 0, 0, 0.5, 0.23)+
+  draw_plot(fig_2_d, 0.5, 0, 0.5, 0.46)
+dev.off()
+
+
+fig_3_a <- ggplot(truncation_metrics,aes(x=seq_type,y=value,group=seq_type))+
+  geom_violin(aes(fill=seq_type))+
+  theme_cowplot()+
+  facet_wrap(.~factor(variable,labels = c('FE','polyA peaks','FE & polyA peaks')))+
+  ylim(0,1)+
+  labs(y='Proportion of reads with \n terminal coordinate in feature',fill='Seq type')+
+  scale_fill_manual(values = colors_to_use)+
+  background_grid(major = 'y')+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.text=element_text(size=10),
+        strip.background=element_rect(fill='gray95'),
+        legend.position='none',
+        panel.background = element_rect(color='lightgray'),
+        axis.title.x = element_blank())
+
+
+fig_3_b_top <- all_bins_for_plot_after_filter[all_bins_for_plot_after_filter$classif_for_plot!='transcript end' & all_bins_for_plot_after_filter$classif_for_plot!='transcript start' & !is.na(all_bins_for_plot_after_filter$classif_for_plot) & all_bins_for_plot_after_filter$classif_for_plot!='' ,] %>% subset(end=='read starts') %>% ggplot(aes(x=bin,y=sumed_norm_cov,color=seq_type,group=seq_type))+
+  #geom_point()+
+  geom_line(size=1)+
+  theme_cowplot()+
+  facet_grid(end~classif_for_plot)+
+  labs(x='fractional position',y='proportion of reads')+
+  theme(legend.position='none',
+        axis.title.x = element_blank(),axis.ticks.x=element_blank(),axis.text.x = element_blank(),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.background=element_rect(fill='gray95'),strip.text=element_text(size=10)
+  )+
+  scale_color_manual(values = colors_to_use)+
+  background_grid(major='y',minor = 'x')
+
+
+fig_3_b_bot <- all_bins_for_plot_after_filter[all_bins_for_plot_after_filter$classif_for_plot!='transcript end' & all_bins_for_plot_after_filter$classif_for_plot!='transcript start' & !is.na(all_bins_for_plot_after_filter$classif_for_plot) & all_bins_for_plot_after_filter$classif_for_plot!='' ,] %>% subset(end=='read ends') %>% ggplot(aes(x=bin,y=sumed_norm_cov,color=seq_type,group=seq_type))+
+  #geom_point()+
+  geom_line(size=1)+
+  theme_cowplot()+
+  facet_grid(end~factor(classif_for_plot,levels = c('non-last exons','last exons')))+
+  labs(x='fractional position')+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),legend.position = 'none',
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.background=element_rect(fill='gray95'),strip.text=element_text(size=10),axis.title.x = element_blank())+
+  scale_color_manual(values = colors_to_use)+
+  background_grid(major='y',minor = 'x')+
+  scale_y_continuous(labels = function(x) sprintf("%.3f", x))
+
+
+
+all_bins_for_plot_tx_after_filter$feature <- factor(all_bins_for_plot_tx_after_filter$feature,c("Transcript start","Transcript end"),c("transcript start","transcript end"))
+all_bins_for_plot_tx_after_filter$end <- factor(all_bins_for_plot_tx_after_filter$end,c("read starts","read ends"))
+
+fig_3_c <- all_bins_for_plot_tx_after_filter %>% ggplot(aes(x=bin,y=sumed_norm_cov,color=seq_type,group=seq_type))+
+  geom_line()+
+  geom_line(size=1)+
+  theme_cowplot()+
+  facet_grid(end~feature,scales = 'free_y')+
+  scale_color_manual(values = colors_to_use)+
+  scale_x_continuous(breaks = c(0,0.5,1),labels = c('-250','0','+250'))+
+  labs(y='proportion of reads',x='distance from site (nt)')+
+  background_grid(major='y',minor = 'x')+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.text=element_text(size=10),
+        strip.background=element_rect(fill='gray95'),
+        legend.position='none',axis.title.x = element_blank())
+
+fig_3_d <- genes_per_sample %>% subset(threshold==10) %>% ggplot(aes(color=seq_type,y=n_of_genes,x=factor(seq_type,labels = c('directcDNA\n(ONT)','directRNA\n(ONT)','Iso-Seq\n(PacBio)','TIF-Seq2')),fill=filter))+
+  geom_boxplot(outlier.color = 'black',outlier.size = 0.1,outlier.alpha = 0.02)+
+  scale_color_manual(values = colors_to_use)+
+  scale_fill_manual(values = c('white','lightgray'))+
+  #scale_y_log10()+
+  labs(y='Number of genes (>10 reads)',fill='Sequencing type')+
+  ylim(3500,15000)+
+  theme_cowplot()+
+  background_grid(major = 'y')+
+  theme(axis.text.x = element_text(angle = 0, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.text=element_text(size=10),
+        strip.background=element_rect(fill='gray95'),
+        legend.position='none',
+        axis.title.x = element_blank())
+
+fig_3_e <- counts_per_gene %>% ggplot(aes(color=seq_type,y=cpm,x=factor(seq_type,labels = c('directcDNA\n(ONT)','directRNA\n(ONT)','Iso-Seq\n(PacBio)','TIF-Seq2')),fill=filter))+
+  geom_boxplot(outlier.color = 'black',outlier.size = 0.1,outlier.alpha = 0.02)+
+  scale_color_manual(values = colors_to_use)+
+  scale_fill_manual(values = c('white','lightgray'))+
+  scale_y_log10()+
+  labs(y='CPM per gene',fill='',color='Sequencing type')+
+  theme_cowplot()+
+  background_grid(major = 'y')+
+  theme(axis.text.x = element_text(angle = 0, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.text=element_text(size=10),
+        strip.background=element_rect(fill='gray95'),
+        legend.position='none',
+        axis.title.x = element_blank())
+
+
+
+pdf('~/Desktop/fig3_new.pdf',width = 8,height = 11)
+#pdf('~/Dropbox (UMass Medical School)/PaiLab/collabprojects/TSS_TES_tech_report/fig3.pdf',width = 8,height = 11)
+ggdraw() + 
+  draw_plot(fig_3_a, 0, 0.72, 1, 0.28)+
+  draw_plot(fig_2_legend,0.4, 0.45, 0.5, 0.5)+
+  draw_plot(fig_3_b_top, 0, 0.44, 0.5, 0.21)+
+  draw_plot(fig_3_b_bot, 0, 0.2, 0.5, 0.21)+
+  draw_plot(fig_3_c, 0.5, 0.2, 0.5, 0.45)+
+  draw_plot(fig_3_d, 0, 0, 0.5, 0.2)+
+  draw_plot(fig_3_e, 0.5, 0, 0.5, 0.2)
+dev.off()
+
+
+#########
+#Supplementary 1
+s1A_df <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/all_reads_length.tsv',sep = '\t',header = T)
+
+
+
+s1A_df$seq_type <- factor(s1A_df$seq_type,levels=c('directcDNA','directRNA','PacBio'),labels=c('directcDNA (ONT)','directRNA (ONT)','Iso-seq (PacBio)'))
+
+fig_s1A <- ggplot(s1A_df)+
+  geom_density(aes(x=read_length,color=seq_type),size=2)+
+  theme_minimal(base_size = 20)+
+  labs(x='read length (nt)',color='sequencing type')+
+  scale_x_continuous(limits = c(0,10000))+
+  scale_color_manual(values = colors_to_use)
+
+
+s1B_df <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/non_term_FE_polyA.tsv',sep = '\t',header = T)
+s1B_df$seq_type <- factor(s1B_df$seq_type,levels=c('directcDNA','directRNA','PacBio'),labels=c('directcDNA (ONT)','directRNA (ONT)','Iso-seq (PacBio)'))
+
+fig_s1B <- ggplot(s1B_df)+
+  geom_density(aes(x=read_length,color=seq_type),size=2)+
+  theme_minimal(base_size = 20)+
+  labs(x='read length (nt)',color='sequencing type')+
+  scale_x_continuous(limits = c(0,10000))+
+  scale_color_manual(values = colors_to_use)
+
+pdf('~/Dropbox (UMass Medical School)/PaiLab/collabprojects/TSS_TES_tech_report/figS1.pdf',width = 8,height = 6)
+ggdraw() + 
+  draw_plot(fig_s1A, 0, 0.5, 1, 0.5)+
+  draw_plot(fig_s1B,0, 0.0, 1, 0.5)
+dev.off()
+
+
+##
+#Supplementary 2
+write.table(trunc_cage,'~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/cage_truncation.tsv',sep = '\t',col.names = T,row.names = F,quote = F)
+trunc_cage <- read.table('~/Dropbox (UMass Medical School)/PaiLab/members/Ezequiel/4th year/technical_report_TSS_TES/data/cage_truncation.tsv',sep = '\t',header = T)
+
+trunc_cage$seq_type <- factor(trunc_cage$seq_type,levels=c('directcDNA (ONT)','directRNA (ONT)','Iso-seq (PacBio)','TIF-Seq2'))
+trunc_cage$variable <- factor(trunc_cage$variable,levels=c('FE','polyA','FE+polyA'),labels=c('CAGE','polyA peaks','CAGE & polyA peaks'))
+
+fig_s2 <- ggplot(trunc_cage,aes(x=seq_type,y=value,group=seq_type))+
+  geom_violin(aes(fill=seq_type))+
+  theme_cowplot()+
+  facet_wrap(.~variable)+
+  ylim(0,1)+
+  labs(y='Proportion of reads with \n terminal coordinate in feature',fill='Seq type')+
+  scale_fill_manual(values = colors_to_use)+
+  background_grid(major = 'y')+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),axis.line = element_line(colour = 'black', size = 1),
+        axis.text = element_text(size=9), axis.title = element_text(size=10),
+        legend.text=element_text(size=9), legend.title=element_text(size=9),
+        strip.text=element_text(size=10),
+        strip.background=element_rect(fill='gray95'),
+        legend.position='none',
+        panel.background = element_rect(color='lightgray'),
+        axis.title.x = element_blank())
+
+pdf('~/Dropbox (UMass Medical School)/PaiLab/collabprojects/TSS_TES_tech_report/figS2.pdf',width = 8,height = 8)
+ggdraw() + 
+  draw_plot(fig_s2, 0, 0.5, 1, 0.5)
+dev.off()
